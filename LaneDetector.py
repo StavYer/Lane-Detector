@@ -8,6 +8,7 @@ load_dotenv()
 RAW_VIDEO_PATH = os.getenv("RAW_VIDEO_PATH")
 INPUT_SEGMENT_PATH = os.getenv("SEGMENT_PATH")
 RAW_NIGHT_VIDEO_PATH = os.getenv("RAW_NIGHT_VIDEO_PATH")
+CARS_XML = os.getenv("CARS_XML")
 
 def roi_mask(input_frame):
     frame = input_frame.copy()
@@ -24,6 +25,26 @@ def roi_mask(input_frame):
     mask = cv2.fillPoly(np.zeros_like(frame), trapezoid, 255)
     masked_frame = cv2.bitwise_and(frame, mask)
     return masked_frame
+
+def detect_cars(input_frame, input_cascade):
+    # Get rid of sides and upper part of the frame
+    frame = input_frame.copy()
+    height, width = frame.shape[:2]
+    roi = np.array([[
+        (int(0.05 * width), height),
+        (int(0.05 * width), int(0.45 * height)),
+        (int(0.95 * width), int(0.45 * height)),
+        (int(0.95 * width), height)
+
+    ]], dtype=np.int32)
+    mask = cv2.fillPoly(np.zeros_like(frame), roi, 255)
+    masked_frame = cv2.bitwise_and(frame, mask)
+    # convert to grayscale
+    gray_frame = cv2.cvtColor(masked_frame, cv2.COLOR_RGB2GRAY)
+
+    cars = input_cascade.detectMultiScale(gray_frame, scaleFactor=1.3, minNeighbors=7)
+
+    return cars, gray_frame
 
 def process_frame(input_frame):
     frame = input_frame.copy()
@@ -78,6 +99,8 @@ def detect_lanes(
     # Other variables' initialization
     frame_count = 0
     read = True
+
+    car_cascade = cv2.CascadeClassifier(CARS_XML)
 
     while read:
         read, frame = input_video.read()
@@ -147,7 +170,7 @@ def detect_lanes(
         x1, y1, x2, y2 = get_coordinates(left_rho, left_theta)
         x3, y3, x4, y4 = get_coordinates(right_rho, right_theta)
 
-        # Crop lines top/bottom
+        # Crop lines top/bottom, 620 top for day, 720 for night
         if y2 < 620:
             x2 = int(x2 + (620 - y2) * (x1 - x2) / (y1 - y2))
             y2 = 620
@@ -163,12 +186,6 @@ def detect_lanes(
             y4 = 950
             
         center = (x2 + x3) / 2
-
-        # Draw lane lines
-        if left_lines is not None:
-            cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 0), 10)
-        if right_lines is not None:
-            cv2.line(frame, (x3, y3), (x4, y4), (255, 0, 0), 10)
 
         # Lane-change detection
         if len(prev_left_lanes) > 0:
@@ -214,6 +231,21 @@ def detect_lanes(
                 left_change = False
                 right_change = False
                 text_frames = 0
+
+        # Detect cars
+
+        cars, debug_frame = detect_cars(frame, car_cascade)
+
+        for (x, y, w, h) in cars:
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+
+        # Draw lane lines
+        if left_lines is not None:
+            cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 0), 5)
+        if right_lines is not None:
+            cv2.line(frame, (x3, y3), (x4, y4), (255, 0, 0), 5)
+
 
         # Write frame to output
         writer.write(frame)
