@@ -46,6 +46,22 @@ def detect_cars(input_frame, input_cascade):
 
     return cars, gray_frame
 
+
+def any_overlap_with_lane(x, y, w, h, lane_mask):
+    """
+    Returns True if ANY part of the bounding box (x,y,w,h)
+    overlaps the lane_mask (white pixels).
+    """
+    # Ensure we don't go out of bounds if the detection extends beyond image edges
+    y1, y2 = max(0, y), min(y + h, lane_mask.shape[0])
+    x1, x2 = max(0, x), min(x + w, lane_mask.shape[1])
+    
+    # Slice the relevant region in the mask
+    sub_mask = lane_mask[y1:y2, x1:x2]
+    
+    # If any pixel in sub_mask is nonzero => overlap
+    return cv2.countNonZero(sub_mask) > 0
+
 def process_frame(input_frame):
     frame = input_frame.copy()
     gray_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
@@ -173,15 +189,15 @@ def detect_lanes(
         x1, y1, x2, y2 = get_coordinates(left_rho, left_theta)
         x3, y3, x4, y4 = get_coordinates(right_rho, right_theta)
 
-        # Crop lines top/bottom, 620 top for day, 720 for night
-        if y2 < 620:
-            x2 = int(x2 + (620 - y2) * (x1 - x2) / (y1 - y2))
-            y2 = 620
-        if y3 < 620:
-            x3 = int(x3 + (620 - y3) * (x4 - x3) / (y4 - y3))
-            y3 = 620
+        # Crop lines top, 620 top for day, 720 for night
+        if y2 < 640:
+            x2 = int(x2 + (640 - y2) * (x1 - x2) / (y1 - y2))
+            y2 = 640
+        if y3 < 640:
+            x3 = int(x3 + (640 - y3) * (x4 - x3) / (y4 - y3))
+            y3 = 640
 
-        if y1 > 950:  
+        if y1 > 950:  # crop bottom
             x1 = int(x1 + (950 - y1) * (x2 - x1) / (y2 - y1))
             y1 = 950
         if y4 > 950:  
@@ -239,45 +255,32 @@ def detect_lanes(
 
         cars, debug_frame = detect_cars(frame, car_cascade)
 
-
-        for (x, y, w, h) in cars:
-            
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
+        lane_mask = np.zeros((frame.shape[0], frame.shape[1]), dtype=np.uint8)
 
         if left_lines is not None and right_lines is not None:
+            # Draw the lines
             cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 0), 5)
             cv2.line(frame, (x3, y3), (x4, y4), (255, 0, 0), 5)
-            # Create a mask
-            lane_mask = np.zeros((frame.shape[0], frame.shape[1]), dtype=np.uint8)
-            
-            # Define the polygon that covers the region between the two lines
-            # (x1, y1)->(x2, y2) is the left lane; (x3, y3)->(x4, y4) is the right lane.
-            # The order of points in the polygon matters for a correct fill.
-            # Here, we go [left top, left bottom, right bottom, right top].
+
+            # Define the polygon for lane area
             lane_points = np.array([[
                 (x1, y1), 
                 (x2, y2), 
                 (x3, y3), 
                 (x4, y4)
             ]], dtype=np.int32)
-            
-            # Fill the polygon on the mask
+
+            # Fill that polygon on lane_mask
             cv2.fillPoly(lane_mask, lane_points, 255)
 
-            # Optionally, color the lane area on the frame
+            # Optionally color the lane area (green) with some transparency
             color_mask = np.zeros_like(frame)
-            # Let's fill it with green for visualization
-            color_mask[:, :, 1] = lane_mask  # fill green channel where mask=255
-
-            # Merge with some transparency
+            color_mask[:, :, 1] = lane_mask  # fill the green channel
             alpha = 0.3
             frame = cv2.addWeighted(frame, 1, color_mask, alpha, 0)
 
-            # Calculate lane area in pixels
+            # Calculate & print lane area in pixels
             lane_area = cv2.countNonZero(lane_mask)
-
-            # Print area on the frame
             cv2.putText(
                 frame, 
                 f"Lane area: {lane_area} px", 
@@ -287,8 +290,13 @@ def detect_lanes(
                 (0, 255, 255), 
                 2
             )
-        # ---------------------------
+        for (x, y, w, h) in cars:
+            if any_overlap_with_lane(x, y, w, h, lane_mask):
+                color = (0, 0, 255)  # Red if overlap with lane mask
+            else:
+                color = (0, 255, 0)  # Green if no overlap
 
+            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
         # Write frame to output
         writer.write(frame)
 
