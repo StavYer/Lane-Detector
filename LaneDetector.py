@@ -50,7 +50,9 @@ def process_frame(input_frame):
     frame = input_frame.copy()
     gray_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
     blurred_frame = cv2.GaussianBlur(gray_frame, (5, 5), 0)
-    edges = cv2.Canny(blurred_frame, 50, 100)
+    kernel = np.ones((5, 5), np.uint8)
+    dilated_frame = cv2.dilate(blurred_frame, kernel)
+    edges = cv2.Canny(dilated_frame, 50, 100)
     masked_frame = roi_mask(edges)
     return masked_frame
 
@@ -99,6 +101,7 @@ def detect_lanes(
     # Other variables' initialization
     frame_count = 0
     read = True
+    in_area = False
 
     car_cascade = cv2.CascadeClassifier(CARS_XML)
 
@@ -236,16 +239,55 @@ def detect_lanes(
 
         cars, debug_frame = detect_cars(frame, car_cascade)
 
+
         for (x, y, w, h) in cars:
+            
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
 
-        # Draw lane lines
-        if left_lines is not None:
+        if left_lines is not None and right_lines is not None:
             cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 0), 5)
-        if right_lines is not None:
             cv2.line(frame, (x3, y3), (x4, y4), (255, 0, 0), 5)
+            # Create a mask
+            lane_mask = np.zeros((frame.shape[0], frame.shape[1]), dtype=np.uint8)
+            
+            # Define the polygon that covers the region between the two lines
+            # (x1, y1)->(x2, y2) is the left lane; (x3, y3)->(x4, y4) is the right lane.
+            # The order of points in the polygon matters for a correct fill.
+            # Here, we go [left top, left bottom, right bottom, right top].
+            lane_points = np.array([[
+                (x1, y1), 
+                (x2, y2), 
+                (x3, y3), 
+                (x4, y4)
+            ]], dtype=np.int32)
+            
+            # Fill the polygon on the mask
+            cv2.fillPoly(lane_mask, lane_points, 255)
 
+            # Optionally, color the lane area on the frame
+            color_mask = np.zeros_like(frame)
+            # Let's fill it with green for visualization
+            color_mask[:, :, 1] = lane_mask  # fill green channel where mask=255
+
+            # Merge with some transparency
+            alpha = 0.3
+            frame = cv2.addWeighted(frame, 1, color_mask, alpha, 0)
+
+            # Calculate lane area in pixels
+            lane_area = cv2.countNonZero(lane_mask)
+
+            # Print area on the frame
+            cv2.putText(
+                frame, 
+                f"Lane area: {lane_area} px", 
+                (50, 270), 
+                cv2.FONT_HERSHEY_SIMPLEX, 
+                1, 
+                (0, 255, 255), 
+                2
+            )
+        # ---------------------------
 
         # Write frame to output
         writer.write(frame)
